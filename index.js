@@ -6,6 +6,7 @@ bluebird.promisifyAll(Redis.RedisClient.prototype);
 bluebird.promisifyAll(Redis.Multi.prototype);
 
 const Q = require('q');
+const utils = require('utils');
 
 class YATS
 {
@@ -32,7 +33,7 @@ class YATS
 
 	scheduleTasksAsync (tasks)
 	{
-
+		return Q.all(tasks.map(task => this.scheduleTaskAsync(task)));
 	}
 
 	scheduleTaskAsync (task)
@@ -73,7 +74,7 @@ class YATS
 		if (criteria.times) 
 		{
 			// let multis = _.map(criteria.ids, id => ['zrange', this.getZTaskKey(), id]);
-			let sortedTimes = JSON.parse(JSON.stringify(criteria.times)).sort();
+			let sortedTimes = utils.deepClone(criteria.times).sort();
 			let min = sortedTimes[0];
 			let max = sortedTimes[sortedTimes.length-1];
 
