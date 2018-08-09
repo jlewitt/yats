@@ -7,18 +7,29 @@ bluebird.promisifyAll(Redis.Multi.prototype);
 
 const Q = require('q');
 const utils = require('./utils');
+const EventEmitter = require('events');
 
-class YATS
+class YATS extends EventEmitter
 {
 	constructor (options)
 	{
+		super();
 		this.options = options;
-
+		// this.ee = new EventEmitter();
+		// this.on = this.ee.prototype.on;
+		// console.log('this.prototype:', this.prototype);
+		// // console.log('this.prototype.on:', this.prototype.on);
+		// console.log('this.ee.prototype.on:', this.ee.prototype.on);
+		// this.prototype.on = this.ee.prototype.on;
 		if (!this.options) this.options = {};
 		
 		this.keyspace = utils.keySuffix(this.options.keyspace || 'yats');
-
+		this.runTimeout = this.options.runTimeout || 60000;
+		this.autoRun = (this.options.autoRun === undefined ? true : this.options.autoRun);
+		console.log('this.autoRun:', this.autoRun);
 		this.redis = Redis.createClient(this.options.db);
+
+		if (this.autoRun) setTimeout(this.__run(), this.runTimeout);
 	}
 
 	/* rough api (to work via node.js + REST)
@@ -78,7 +89,11 @@ class YATS
 
 			return this.redis
 			.multi(multis)
-			.execAsync();
+			.execAsync()
+			.then( res =>
+			{
+				return Q.resolve(res.map(x => utils.parse(x)));
+			})
 		}
 
 		if (criteria.times) 
@@ -109,49 +124,63 @@ class YATS
 		]);
 	}
 
-	_runAsync ()
+	run ()
 	{
-		return getTasks({where: {state: 'active'}, limit: 1})
-		.then( tasks =>
-		{
-			if (!tasks || tasks.length === 0)
-				return Q.resolve();
-
-			return _runOneAsync(tasks.shift());
-		});
-	}
-
-	// weird structure to handle both promise-based tasks and callback-based tasks
-	_runOneAsync (task)
-	{
-		let deferred = Q.defer();
-
-		task.execute(_runOneNF(task, deferred.resolve)) // intentionally pass deferred.resolve
+		this._runAsync()
 		.then( () =>
 		{
-			return deferred.resolve(this._completeTaskAsync(task));
+			setTimeout(this.__run(), this.runTimeout);
 		})
 		.catch( err =>
 		{
-			return deferred.resolve();
-		}).done();
-
-		return deferred.promise;
+			console.error(err);
+			setTimeout(this.__run(), this.runTimeout);
+		})
 	}
 
-	_runOneNF (task, deferred)
+	__run ()
 	{
-		return (err) =>
-		{
-			if (err) return deferred.resolve(this._errorTaskAsync(task, err));
+		return () => {this.run.call(this)};
+	}
 
-			return deferred.resolve(this._completeTaskAsync(task));
+	_runAsync ()
+	{
+		// console.log('_runAsync');
+		let now = Date.now() / 1000;
+		return this.getTasksAsync({times: [Math.floor(now)-1, Math.ceil(now) + 1]})
+		.then( tasks =>
+		{
+			// console.log('tasks:', tasks);
+			if (!tasks || tasks.length === 0)
+				return Q.resolve();
+
+			return this._runOneAsync(tasks.shift());
+		});
+	}
+
+	_haveEventHandler (type)
+	{
+		// console.log('type, this.eventNames():', type, this.eventNames(), type in this.eventNames());
+		return this.eventNames().includes(type);
+	}
+
+	_runOneAsync (task)
+	{
+		// check to see if we have a handler
+		if (!this._haveEventHandler(task.type))
+		{
+			// silent failure -- move to error
+			if (false) this.emit('error', new Error('event ' + task.type + ' called but no handler found'));
+			return this._errorTaskAsync(task, 'no matching event handler found');
 		}
+
+		// console.log('_runOneAsync task:', task);
+		this.emit(task.type, task);
+		return this._completeTaskAsync(task);
 	}
 
 	_updateTaskAsync (task)
 	{
-		// console.log('this._getHTaskKey(), task:', this._getHTaskKey(), task); process.exit();
 		return this.redis.hgetAsync(this._getHTaskKey(), task.id)
 		.then( newTask =>
 		{
@@ -180,7 +209,7 @@ class YATS
 		.then( () =>
 		{
 			// move from active list to inactive
-			return this._moveTaskToInactiveAsync(task);
+			return this._moveTaskToErrorAsync(task);
 		});
 	}
 
@@ -233,6 +262,5 @@ class YATS
 		.execAsync();
 	}
 }
-
 
 module.exports = YATS;
