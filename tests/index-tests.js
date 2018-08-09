@@ -87,3 +87,11 @@ describe('deleteTaskAsync', () =>
 		});
 	});
 });
+
+describe('housekeeping', () =>
+{
+	it('destroyAsync', () =>
+	{
+		return yats.destroyAsync();
+	});
+});

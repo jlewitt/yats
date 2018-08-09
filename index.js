@@ -16,10 +16,12 @@ class YATS
 
 		if (!this.options) this.options = {};
 		
-
-		this.options.prefix = this.options.prefix || 'yats';
+		this.keyspace = this.options.keyspace || 'yats';
+		if (!!this.keyspace && this.keyspace.length > 0) this.keyspace += ':';
 
 		this.redis = Redis.createClient(this.options.db);
+
+		console.log('this:', this);
 	}
 
 	/* rough api (to work via node.js + REST)
@@ -167,22 +169,17 @@ class YATS
 
 	_getTaskKey ()
 	{
-		return this._getPrefix() + 'tasks';
+		return this.keyspace + 'tasks';
 	}
 
 	_getZTaskKey ()
 	{
-		return this._getPrefix() + 'ztasks';
+		return this.keyspace + 'ztasks';
 	}
 
 	_getIdKey ()
 	{
-		return this._getPrefix() + 'id';
-	}
-
-	_getPrefix ()
-	{
-		if (!this.prefix || this.prefix.length === 0) return '';
+		return this.keyspace + 'id';
 	}
 
 	_incrIdAsync ()
