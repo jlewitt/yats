@@ -57,3 +57,33 @@ describe('getTasksAsync', () =>
 		});
 	});
 });
+
+
+describe('getTaskByIdAsync', () =>
+{
+	it('gets scheduled task by id', () =>
+	{
+		let id = 1;
+
+		return yats.getTaskByIdAsync(id)
+		.then( task =>
+		{
+			expect(task).to.be.a('string');
+			console.log('task:', task);
+		});
+	});
+});
+
+describe('deleteTaskAsync', () =>
+{
+	it('deletes a task', () =>
+	{
+		let id = 1;
+
+		return yats.deleteTaskAsync(id)
+		.then( res =>
+		{
+			console.log('res:', res);
+		});
+	});
+});

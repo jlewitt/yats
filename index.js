@@ -6,7 +6,7 @@ bluebird.promisifyAll(Redis.RedisClient.prototype);
 bluebird.promisifyAll(Redis.Multi.prototype);
 
 const Q = require('q');
-const utils = require('utils');
+const utils = require('./utils');
 
 class YATS
 {
@@ -14,7 +14,7 @@ class YATS
 	{
 		this.options = options;
 
-		if (!options) this.options = {};
+		if (!this.options) this.options = {};
 		
 
 		this.options.prefix = this.options.prefix || 'yats';
@@ -39,14 +39,14 @@ class YATS
 	scheduleTaskAsync (task)
 	{
 		// naive approach using multiple redis calls vs using a redis script
-		return this.incrIdAsync()
+		return this._incrIdAsync()
 		.then( id =>
 		{
 			task.id = id;
 			return this.redis
 			.multi()
-			.hset(this.getTaskKey(), id, JSON.stringify(task))
-			.zadd(this.getZTaskKey(), task.scheduled, id)
+			.hset(this._getTaskKey(), id, JSON.stringify(task))
+			.zadd(this._getZTaskKey(), task.scheduled, id)
 			.execAsync()
 			.then( res =>
 			{
@@ -54,6 +54,18 @@ class YATS
 				return Q.resolve(id);
 			});
 		})
+	}
+
+	// convenince function
+	getTaskByIdAsync (id)
+	{
+		return this.getTasksAsync({ids: [id]})
+		.then( tasks =>
+		{
+			if (!tasks || tasks.length === 0) return Q.resolve(null);
+
+			return Q.resolve(tasks[0]);
+		});
 	}
 
 	getTasksAsync (criteria)
@@ -64,7 +76,7 @@ class YATS
 
 		if (criteria.ids)
 		{
-			let multis = criteria.ids.map(id => ['hget', this.getTaskKey(), id]);
+			let multis = criteria.ids.map(id => ['hget', this._getTaskKey(), id]);
 
 			return this.redis
 			.multi(multis)
@@ -73,12 +85,12 @@ class YATS
 
 		if (criteria.times) 
 		{
-			// let multis = _.map(criteria.ids, id => ['zrange', this.getZTaskKey(), id]);
+			// let multis = _.map(criteria.ids, id => ['zrange', this._getZTaskKey(), id]);
 			let sortedTimes = utils.deepClone(criteria.times).sort();
 			let min = sortedTimes[0];
 			let max = sortedTimes[sortedTimes.length-1];
 
-			return this.redis.zrangebyscoreAsync(this.getZTaskKey(), min, max)
+			return this.redis.zrangebyscoreAsync(this._getZTaskKey(), min, max)
 			.then( res =>
 			{
 				return this.getTasksAsync({ids: res});
@@ -86,9 +98,17 @@ class YATS
 		}		
 	}
 
-	deleteTasksAsync (criteria)
+	deleteTasksAsync (ids)
 	{
+		return Q.all(ids.map(id => deleteTaskAsync(id)));
+	}
 
+	deleteTaskAsync (id)
+	{
+		return Q.all([
+			this.redis.zremAsync(this._getZTaskKey(), id),
+			this.redis.hdelAsync(this._getTaskKey(), id)
+		]);
 	}
 
 	_runAsync ()
@@ -103,81 +123,80 @@ class YATS
 		});
 	}
 
+	// weird structure to handle both promise-based tasks and callback-based tasks
 	_runOneAsync (task)
 	{
-		task.execute()
+		let deferred = Q.defer();
+
+		task.execute(_runOneNF(task, deferred.resolve))
 		.then( () =>
 		{
-			return _updateTaskAsync({id: task.id, state: 'completed'});
+			return deferred.resolve(this._updateTaskAsync({id: task.id, state: 'completed'}));
 		})
 		.catch( err =>
 		{
-			return _updateTaskAsync(task, {state: 'error', errMsg: err});
-		});
+			return deferred.resolve(this._updateTaskAsync(task, {state: 'error', errMsg: err}));
+		}).done();
+
+		return deferred.promise;
+	}
+
+	_runOneNF (task, deferred)
+	{
+		return (err) =>
+		{
+			if (err) return deferred.resolve(this._updateTaskAsync(task, {state: 'error', errMsg: err}));
+
+			return deferred.resolve(this._updateTaskAsync({id: task.id, state: 'completed'}));
+		}
 	}
 
 	_updateTaskAsync (task)
 	{
-		return this.redis.hget(this.getTaskKey(), task.id)
+		return this.redis.hget(this._getTaskKey(), task.id)
 		.then( newTask =>
 		{
 			if (!newTask) return Q.reject(new Error('unable to find task'));
 
-			let newTaskObj = this.parse(newtask);
+			let newTaskObj = utils.parse(newtask);
 			newTaskObj = _.defaults(newTaskObj, task);
 
 			return this.redis.hset('', task.id, JSON.stringify(newTaskObj));
 		})
 	}
 
-	getTaskKey ()
+	_getTaskKey ()
 	{
-		return this.getPrefix() + 'tasks';
+		return this._getPrefix() + 'tasks';
 	}
 
-	getZTaskKey ()
+	_getZTaskKey ()
 	{
-		return this.getPrefix() + 'ztasks';
+		return this._getPrefix() + 'ztasks';
 	}
 
-	getIdKey ()
+	_getIdKey ()
 	{
-		return this.getPrefix() + 'id';
+		return this._getPrefix() + 'id';
 	}
 
-	getPrefix ()
+	_getPrefix ()
 	{
 		if (!this.prefix || this.prefix.length === 0) return '';
 	}
 
-	parse (str)
+	_incrIdAsync ()
 	{
-		let json;
-		try
-		{
-			json = JSON.parse(str);
-		}
-		catch (ex)
-		{
-			console.error(ex);
-			json = str;
-		}
-
-		return json;
-	}
-
-	incrIdAsync ()
-	{
-		return this.redis.incrAsync(this.getIdKey());
+		return this.redis.incrAsync(this._getIdKey());
 	}
 
 	destroyAsync ()
 	{
 		return this.redis
 		.multi()
-		.del( this.getTaskKey() )
-		.del( this.getZTaskKey() )
-		.del( this.getIdKey() )
+		.del( this._getTaskKey() )
+		.del( this._getZTaskKey() )
+		.del( this._getIdKey() )
 		.execAsync();
 	}
 }
