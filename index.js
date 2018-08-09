@@ -16,17 +16,14 @@ class YATS
 
 		if (!this.options) this.options = {};
 		
-		this.keyspace = this.options.keyspace || 'yats';
-		if (!!this.keyspace && this.keyspace.length > 0) this.keyspace += ':';
+		this.keyspace = utils.keySuffix(this.options.keyspace || 'yats');
 
 		this.redis = Redis.createClient(this.options.db);
-
-		console.log('this:', this);
 	}
 
 	/* rough api (to work via node.js + REST)
 			- schedule task
-			- get schedule tasks
+			- get scheduled tasks
 				+ w/ filter
 			- cancel/delete tasks
 				+ filter by active/inactive
@@ -47,12 +44,11 @@ class YATS
 			task.id = id;
 			return this.redis
 			.multi()
-			.hset(this._getTaskKey(), id, JSON.stringify(task))
+			.hset(this._getHTaskKey(), id, JSON.stringify(task))
 			.zadd(this._getZTaskKey(), task.scheduled, id)
 			.execAsync()
-			.then( res =>
+			.then( () =>
 			{
-				console.log('res:', res);
 				return Q.resolve(id);
 			});
 		})
@@ -78,7 +74,7 @@ class YATS
 
 		if (criteria.ids)
 		{
-			let multis = criteria.ids.map(id => ['hget', this._getTaskKey(), id]);
+			let multis = criteria.ids.map(id => ['hget', this._getHTaskKey(), id]);
 
 			return this.redis
 			.multi(multis)
@@ -109,7 +105,7 @@ class YATS
 	{
 		return Q.all([
 			this.redis.zremAsync(this._getZTaskKey(), id),
-			this.redis.hdelAsync(this._getTaskKey(), id)
+			this.redis.hdelAsync(this._getHTaskKey(), id)
 		]);
 	}
 
@@ -130,14 +126,14 @@ class YATS
 	{
 		let deferred = Q.defer();
 
-		task.execute(_runOneNF(task, deferred.resolve))
+		task.execute(_runOneNF(task, deferred.resolve)) // intentionally pass deferred.resolve
 		.then( () =>
 		{
-			return deferred.resolve(this._updateTaskAsync({id: task.id, state: 'completed'}));
+			return deferred.resolve(this._completeTaskAsync(task));
 		})
 		.catch( err =>
 		{
-			return deferred.resolve(this._updateTaskAsync(task, {state: 'error', errMsg: err}));
+			return deferred.resolve();
 		}).done();
 
 		return deferred.promise;
@@ -147,34 +143,74 @@ class YATS
 	{
 		return (err) =>
 		{
-			if (err) return deferred.resolve(this._updateTaskAsync(task, {state: 'error', errMsg: err}));
+			if (err) return deferred.resolve(this._errorTaskAsync(task, err));
 
-			return deferred.resolve(this._updateTaskAsync({id: task.id, state: 'completed'}));
+			return deferred.resolve(this._completeTaskAsync(task));
 		}
 	}
 
 	_updateTaskAsync (task)
 	{
-		return this.redis.hget(this._getTaskKey(), task.id)
+		// console.log('this._getHTaskKey(), task:', this._getHTaskKey(), task); process.exit();
+		return this.redis.hgetAsync(this._getHTaskKey(), task.id)
 		.then( newTask =>
 		{
 			if (!newTask) return Q.reject(new Error('unable to find task'));
 
-			let newTaskObj = utils.parse(newtask);
-			newTaskObj = _.defaults(newTaskObj, task);
+			let newTaskObj = utils.parse(newTask);
+			newTaskObj = Object.assign(newTaskObj, task);
 
-			return this.redis.hset('', task.id, JSON.stringify(newTaskObj));
+			return this.redis.hsetAsync(this._getHTaskKey(), task.id, JSON.stringify(newTaskObj));
 		})
 	}
 
-	_getTaskKey ()
+	_completeTaskAsync (task)
 	{
-		return this.keyspace + 'tasks';
+		return this._updateTaskAsync({id: task.id, state: 'completed'})
+		.then( () =>
+		{
+			// move from active list to inactive
+			return this._moveTaskToInactiveAsync(task);
+		});
 	}
 
-	_getZTaskKey ()
+	_errorTaskAsync (task, err)
 	{
-		return this.keyspace + 'ztasks';
+		return this._updateTaskAsync({id: task.id, state: 'error', errMsg: err})
+		.then( () =>
+		{
+			// move from active list to inactive
+			return this._moveTaskToInactiveAsync(task);
+		});
+	}
+
+	_moveTaskAsync (task, state)
+	{
+		return this.redis
+		.multi()
+		.zrem(this._getZTaskKey(), task.id)
+		.zadd(this._getZTaskKey(state), task.scheduled, task.id)
+		.execAsync();
+	}
+
+	_moveTaskToInactiveAsync (task)
+	{
+		return this._moveTaskAsync(task, 'inactive');
+	}
+
+	_moveTaskToErrorAsync (task)
+	{
+		return this._moveTaskAsync(task, 'error');
+	}
+
+	_getHTaskKey ()
+	{
+		return this.keyspace + 'htasks';
+	}
+
+	_getZTaskKey (state = '')
+	{
+		return this.keyspace + 'ztasks' + utils.keyPrefix(state);
 	}
 
 	_getIdKey ()
@@ -191,7 +227,7 @@ class YATS
 	{
 		return this.redis
 		.multi()
-		.del( this._getTaskKey() )
+		.del( this._getHTaskKey() )
 		.del( this._getZTaskKey() )
 		.del( this._getIdKey() )
 		.execAsync();

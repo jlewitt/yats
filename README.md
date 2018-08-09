@@ -1,2 +1,2 @@
 # yats
-YATS is a flexible task scheduler, built for node.js
+YATS is a task scheduler powered by redis, built for node.js
