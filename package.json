@@ -1,6 +1,6 @@
 {
   "name": "yats",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "YATS is a flexible task scheduler, built for node.js",
   "main": "index.js",
   "scripts": {

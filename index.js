@@ -145,9 +145,9 @@ class YATS extends EventEmitter
 
 	_runAsync ()
 	{
-		// console.log('_runAsync');
 		let now = Date.now() / 1000;
-		return this.getTasksAsync({times: [Math.floor(now)-1, Math.ceil(now) + 1]})
+		// return this.getTasksAsync({times: [Math.floor(now)-1, Math.ceil(now) + 1]})
+		return this.getTasksAsync({times: [0, Math.ceil(now) + 1]})
 		.then( tasks =>
 		{
 			// console.log('tasks:', tasks);
