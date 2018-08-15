@@ -170,7 +170,7 @@ class YATS extends EventEmitter
 	_runOneAsync (task)
 	{
 		// check to see if we have a handler
-		if (!this.checkForEventHandlers)
+		if (!this.checkForEventHandlers && !this._haveEventHandler(task.type))
 			return Q.resolve(true);
 		
 		if (!this._haveEventHandler(task.type))
