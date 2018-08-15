@@ -22,12 +22,15 @@ class YATS extends EventEmitter
 		// console.log('this.ee.prototype.on:', this.ee.prototype.on);
 		// this.prototype.on = this.ee.prototype.on;
 		if (!this.options) this.options = {};
+
+		let configFx = (property, defaultValue) => (this.options[property] === undefined ? defaultValue : this.options[property]);
 		
 		this.keyspace = utils.keySuffix(this.options.keyspace || 'yats');
 		this.runTimeout = this.options.runTimeout || 60000;
-		this.autoRun = (this.options.autoRun === undefined ? true : this.options.autoRun);
+		this.autoRun = configFx('autoRun', true);
 		console.log('this.autoRun:', this.autoRun);
 		this.redis = Redis.createClient(this.options.db);
+		this.checkForEventHandlers = configFx('checkForEventHandlers', false);
 
 		if (this.autoRun) setTimeout(this.__run(), this.runTimeout);
 	}
@@ -167,6 +170,9 @@ class YATS extends EventEmitter
 	_runOneAsync (task)
 	{
 		// check to see if we have a handler
+		if (!this.checkForEventHandlers)
+			return Q.resolve(true);
+		
 		if (!this._haveEventHandler(task.type))
 		{
 			// silent failure -- move to error
